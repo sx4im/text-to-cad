@@ -276,11 +276,18 @@ def serve(argv=None):
         if hasattr(signal, name):
             signal.signal(getattr(signal, name), _leave)
     try:
-        connection.serve()
-    finally:
-        proxy.close()
-        # A server this process is starting is up before it leaves, never half started after it.
-        holder.tried.wait(60)
+        try:
+            connection.serve()
+        finally:
+            proxy.close()
+            # A server this process is starting is up before it leaves, never half started after it.
+            holder.tried.wait(60)
+    except KeyboardInterrupt:
+        # Ctrl+C while serving, or while the session is being ended: the session is ending anyway, so
+        # leave quietly, the same way as at the input's end -- no traceback, exit 0. The interrupt is
+        # caught here rather than handled as a signal because it can land inside the cleanup itself,
+        # where a handler would only raise out of it.
+        pass
     return 0
 
 
