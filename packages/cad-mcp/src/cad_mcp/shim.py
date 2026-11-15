@@ -295,4 +295,11 @@ def main(argv=None):
     if args:
         sys.stderr.write(f"cad-mcp: unrecognized arguments: {' '.join(args)}\n")
         return 2
-    return serve()
+    try:
+        return serve()
+    except KeyboardInterrupt:
+        # Ctrl+C while the host ends this process: the session is already ended -- serve()'s finally
+        # ran proxy.close() on the way out, wherever the interrupt landed, even inside that cleanup --
+        # so end quietly, as at the input's end, with no traceback and a zero exit, not a crash in
+        # the host's log. (SIGTERM and SIGHUP keep their own way out: _leave's 128 + signal.)
+        return 0
