@@ -22,7 +22,7 @@ from typing import Any
 
 import numpy as np
 
-__all__ = ["groups", "look_of", "meshes", "placed_points", "shaded"]
+__all__ = ["groups", "look_of", "merged", "meshes", "placed_points", "shaded"]
 
 DEFAULT_COLOR = (0.8, 0.8, 0.8, 1.0)
 
@@ -51,6 +51,33 @@ def meshes(view: Any) -> dict[int, Any]:
             MESHES.put(key, data, made.unmeshed)
         found[index] = Mesh.from_bytes(data)
     return found
+
+
+def merged(mesh: Any, *, tolerance: float = 1e-5) -> Any:
+    """A mesh with one vertex per position: the seam copies a face's own tessellation leaves
+    merged, so a triangle's edges are shared by index, not only by position -- a 3MF's slicers
+    count an edge by index, so a seam edge otherwise reads as an open one. Positions within
+    ``tolerance`` millimetres of each other are one vertex, the first's; the indices are
+    remapped, the face table -- firsts and counts into the indices -- is unchanged, the normals
+    are the first's. A mesh with no repeated position comes back as itself."""
+    from cad.engine.mesh_format import Mesh
+
+    positions = np.asarray(mesh.positions, np.float64)
+    if not len(positions):
+        return mesh
+    _, first, remap = np.unique(np.round(positions / tolerance).astype(np.int64), axis=0,
+                                return_index=True, return_inverse=True)
+    if len(first) == len(positions):
+        return mesh
+    order = np.argsort(first, kind="stable")
+    rank = np.empty_like(order)
+    rank[order] = np.arange(len(order))
+    kept = np.sort(first)
+    normals = mesh.normals[kept] if mesh.normals is not None else None
+    return Mesh(np.asarray(mesh.positions, dtype=np.float32)[kept], normals,
+                rank[remap][np.asarray(mesh.indices)].astype(np.uint32),
+                mesh.faces, mesh.edges, mesh.edge_points, mesh.vertices,
+                mesh.linear, mesh.angular, mesh.unmeshed)
 
 
 def shaded(mesh: Any) -> Any:

@@ -23,7 +23,7 @@ from typing import Any
 from xml.sax.saxutils import escape, quoteattr
 
 from cad.engine.export import ZIP_DATE, within
-from cad.engine.export.mesh import groups, meshes
+from cad.engine.export.mesh import groups, merged, meshes
 from cad.engine.formats.gltf import drawn_alpha
 
 __all__ = ["write"]
@@ -63,7 +63,7 @@ def write(view: Any, path: Path) -> None:
         key = (index, color)
         if key in object_at:
             return object_at[key]
-        mesh = held[index]
+        mesh = merged(held[index])
         if not mesh.triangles:
             object_at[key] = None
             return None
