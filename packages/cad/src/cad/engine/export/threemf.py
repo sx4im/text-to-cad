@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape, quoteattr
 
+import numpy as np
+
 from cad.engine.export import ZIP_DATE, within
 from cad.engine.export.mesh import groups, meshes
 from cad.engine.formats.gltf import drawn_alpha
@@ -32,6 +34,26 @@ CORE = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
 MATERIALS = "http://schemas.microsoft.com/3dmanufacturing/material/2015/02"
 BASE_ID = 1
 PROPERTIES_ID = 2
+
+#: Positions closer than this, in millimetres, are one vertex: a face's triangulation repeats
+#: the seam vertices its neighbours use, and the writer merges them back (see ``_merged``).
+_MERGE_MM = 5
+
+
+def _merged(mesh: Any) -> tuple[np.ndarray, np.ndarray]:
+    """A mesh's positions with one vertex per position, and its triangles' indices remapped
+    onto them: each face is triangulated on its own, so a seam vertex is written once per
+    face that uses it, and a slicer counts every seam edge open by index (the triangles'
+    positions close up, but their indices do not). Positions equal to 1e-5 mm merge; a mesh
+    with no repeats comes back in its own order, its indices unchanged, and no triangle is
+    ever dropped."""
+    rounded = np.round(np.asarray(mesh.positions, dtype=np.float64), _MERGE_MM)
+    _unique, first, inverse = np.unique(rounded, axis=0, return_index=True, return_inverse=True)
+    order = np.argsort(first, kind="stable")
+    rank = np.empty(len(order), dtype=np.int64)
+    rank[order] = np.arange(len(order))
+    positions = np.asarray(mesh.positions, dtype=np.float32)[first[order]]
+    return positions, rank[inverse].astype(np.uint32)
 
 
 def _srgb(value: float) -> int:
@@ -69,12 +91,13 @@ def write(view: Any, path: Path) -> None:
             return None
         prototype = view.prototypes[index]
         default = look_index(groups(mesh, {**prototype, "faceColors": {}, "faceMaterials": {}}, color)[0][0])
-        vertices = "".join(f'<vertex x="{x:.6g}" y="{y:.6g}" z="{z:.6g}"/>' for x, y, z in mesh.positions.tolist())
+        positions, remap = _merged(mesh)
+        vertices = "".join(f'<vertex x="{x:.6g}" y="{y:.6g}" z="{z:.6g}"/>' for x, y, z in positions.tolist())
         rows = []
         for look, indices in groups(mesh, prototype, color):
             at = look_index(look)
             tail = "/>" if at == default else f' pid="{BASE_ID}" p1="{at}"/>'
-            rows.extend(f'<triangle v1="{a}" v2="{b}" v3="{c}"{tail}' for a, b, c in indices.reshape(-1, 3).tolist())
+            rows.extend(f'<triangle v1="{a}" v2="{b}" v3="{c}"{tail}' for a, b, c in remap[indices].reshape(-1, 3).tolist())
         ident = len(objects) + 3
         objects.append(f'<object id="{ident}" type="model" name={quoteattr(prototype["name"])} pid="{BASE_ID}" '
                        f'pindex="{default}"><mesh><vertices>{vertices}</vertices>'

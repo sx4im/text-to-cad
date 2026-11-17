@@ -38,6 +38,17 @@ def tube():
     return bd.Cylinder(42.5, 60) - bd.Cylinder(38.5, 60)
 """
 
+# #843: a 20 mm cube, whose faces share its 8 corners.
+BOX = """
+import build123d as bd
+from cad import threemf
+
+
+@threemf("box.3mf")
+def box_plain():
+    return bd.Box(20, 20, 20)
+"""
+
 _RECORD = np.dtype([("normal", "<f4", 3), ("corners", "<f4", (3, 3)), ("attribute", "<u2")])
 
 
@@ -72,6 +83,8 @@ class ExportToleranceTest(unittest.TestCase):
         cls.folder = Path(tempfile.mkdtemp(prefix="export-tolerance-")).resolve()
         (cls.folder / "tube.py").write_text(textwrap.dedent(SCRIPT), encoding="utf-8")
         api.build_script(cls.folder / "tube.py", daemon=False)
+        (cls.folder / "box.py").write_text(textwrap.dedent(BOX), encoding="utf-8")
+        api.build_script(cls.folder / "box.py", daemon=False)
         cls.xbf = cls.folder / "XBF/tube.xbf"
 
     @classmethod
@@ -104,6 +117,22 @@ class ExportToleranceTest(unittest.TestCase):
         self.assertIn('<metadata name="Description">Meshed to within 0.01 mm</metadata>', model)
         vertices = re.findall(r'<vertex x="([^"]+)" y="([^"]+)" z="([^"]+)"/>', model)
         self.assertLessEqual(_depth(_segments(np.array(vertices, dtype=float))), 0.01)
+
+    def test_a_3mf_shares_one_vertex_per_position_so_no_seam_edge_is_open(self) -> None:
+        """#843: a cube's faces share its corners, so the file holds 8 vertices and every
+        edge is used by exactly two triangles (a slicer counts an edge open when only one
+        triangle names it by index)."""
+        model = zipfile.ZipFile(self.folder / "box.3mf").read("3D/3dmodel.model").decode()
+        vertices = re.findall(r'<vertex x="([^"]+)" y="([^"]+)" z="([^"]+)"/>', model)
+        self.assertEqual(len(vertices), 8)
+        triangles = re.findall(r'<triangle v1="(\d+)" v2="(\d+)" v3="(\d+)"', model)
+        self.assertEqual(len(triangles), 12)
+        used: dict[frozenset, int] = {}
+        for a, b, c in triangles:
+            for edge in (frozenset((a, b)), frozenset((b, c)), frozenset((c, a))):
+                used[edge] = used.get(edge, 0) + 1
+        self.assertEqual(len(used), 18)
+        self.assertTrue(all(count == 2 for count in used.values()))
 
     def test_a_glb_is_the_viewer_s_mesh_unless_the_export_says_and_then_it_says_what_it_was_meshed_to(self) -> None:
         plain, again = self.folder / "plain.glb", self.folder / "again.glb"
