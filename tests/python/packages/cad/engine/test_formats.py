@@ -596,6 +596,35 @@ class MeshFileTest(FixtureTest):
         mesh = Mesh.from_bytes(found.buffers[plate["key"]])
         self.assertAlmostEqual(float(np.ptp(mesh.positions[:, 0])), 60.0, places=4)
 
+    def test_a_3mf_wearing_a_material_reads_without_the_physics_packages(self) -> None:
+        """A 3MF whose parts wear a material still reads where bd_materials is not installed
+        (a `cad threemf dfm` environment): the material stays the look it was, written by hand
+        in the shape a RangeMaterial serializes to, instead of the mesh failing unreadable."""
+        import sys
+
+        blocked = {name: sys.modules.pop(name, None)
+                   for name in ("bd_materials", "bd_materials.core", "threejs_materials")}
+        for name in blocked:
+            sys.modules[name] = None
+        try:
+            found = formats.read(write_3mf(self.folder / "kit.3mf"))
+        finally:
+            for name, module in blocked.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
+        plate, peg = found.structure["prototypes"]
+        self.assertIsNone(plate["material"], "the plate's default base material is no material")
+        material = peg["material"]
+        self.assertEqual(material["type"], "RangeMaterial")
+        self.assertEqual(material["material"],
+                         {"name": "3MF display properties", "density": None, "family": None, "transparent": False},
+                         "the wire a RangeMaterial serializes to, written by hand")
+        self.assertEqual(material["pbr"]["values"]["metalness"], 1, "the steel base material's display properties")
+        self.assertEqual(material["pbr"]["values"]["roughness"], 0.3)
+        self.assertAlmostEqual(peg["color"][0], 0.246201, places=5)
+
 
 # --- GLB -------------------------------------------------------------------------------------------
 
