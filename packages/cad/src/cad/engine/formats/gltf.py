@@ -251,17 +251,30 @@ def material_of(entry: dict[str, Any]) -> dict[str, Any]:
                              "roughness": float(pbr.get("roughnessFactor", 1.0)), "ior": 1.5,
                              "emissive": [float(value) for value in entry.get("emissiveFactor", (0.0, 0.0, 0.0))]}
     found.update(look_extensions(entry.get("extensions") or {}))
-    from bd_materials import FinishedMaterial
-    from bd_materials.core import RangeMaterial
-    from threejs_materials import PbrProperties
     from cad.engine.colors import linear_to_srgb
-    from cad.engine.document import material_json
 
     name = found.pop("name")
     rgba = found.pop("color")
     found["color"] = [linear_to_srgb(c) for c in rgba[:3]]
     found["opacity"] = preview_alpha(rgba[3], found.get("transmission") or 0.0)
     found["metalness"] = found.pop("metallic")
+    try:
+        from bd_materials import FinishedMaterial
+        from bd_materials.core import RangeMaterial
+        from threejs_materials import PbrProperties
+
+        from cad.engine.document import material_json
+    except ModuleNotFoundError:
+        # No CAD kernel in this process: a mesh file read in a dfm check runs where
+        # bd_materials is not installed, and a conversion between mesh files loads no
+        # CAD kernel (``export/mesh_file.py``). The same wire dict ``material_json``
+        # would write for this material -- a ``RangeMaterial`` of this name, no density
+        # or family, not transparent, and the PBR look as ``PbrProperties.to_dict``
+        # writes it -- built directly, so the read does not die on the import.
+        return {"type": "RangeMaterial",
+                "material": {"name": name, "density": None, "family": None, "transparent": False},
+                "pbr": {"id": name, "license": "", "name": name, "source": "glTF", "textures": {},
+                        "url": "", "values": found}}
     return material_json(FinishedMaterial(RangeMaterial(name=name, density=None),
         pbr=PbrProperties.from_dict({"id": name, "name": name, "source": "glTF", "values": found})))
 

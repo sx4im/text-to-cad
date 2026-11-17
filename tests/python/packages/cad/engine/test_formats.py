@@ -30,6 +30,7 @@ import math
 import os
 import shutil
 import struct
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -354,6 +355,31 @@ def write_stl(path: Path, triangles: np.ndarray, *, ascii_: bool = False) -> Pat
     return path
 
 
+class _NoKernel:
+    """``bd_materials`` and ``threejs_materials`` unimportable, as a dfm check's process
+    has them: the CAD kernel's packages are not installed there, so a mesh file read
+    there loads no CAD kernel (``export/mesh_file.py``)."""
+
+    _BLOCKED = ("bd_materials", "threejs_materials")
+
+    def __enter__(self) -> "_NoKernel":
+        self._saved = {name: sys.modules.pop(name) for name in
+                       [name for name in sys.modules if name.split(".")[0] in self._BLOCKED]}
+        sys.meta_path.insert(0, self)
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        sys.meta_path.remove(self)
+        for name in [name for name in sys.modules if name.split(".")[0] in self._BLOCKED]:
+            sys.modules.pop(name, None)
+        sys.modules.update(self._saved)
+
+    def find_spec(self, name: str, path: object = None, target: object = None) -> None:
+        if name.split(".")[0] in self._BLOCKED:
+            raise ModuleNotFoundError(f"No module named {name!r} (no CAD kernel here)")
+        return None
+
+
 def write_3mf(path: Path) -> Path:
     """A plate whose top is painted by a colour group, a peg placed twice by a components object,
     a generated default base material (no colour), metallic display properties; in centimetres."""
@@ -595,6 +621,20 @@ class MeshFileTest(FixtureTest):
 
         mesh = Mesh.from_bytes(found.buffers[plate["key"]])
         self.assertAlmostEqual(float(np.ptp(mesh.positions[:, 0])), 60.0, places=4)
+
+    def test_a_3mf_with_a_material_reads_without_the_cad_kernel(self) -> None:
+        """#844: a 3MF whose parts wear a material reads where bd_materials is not
+        installed -- a dfm check's process -- as the same material the kernel's read
+        gives it, so the check measures it instead of reporting mesh_unreadable."""
+        from cad.engine.export import mesh_file
+
+        path = write_3mf(self.folder / "kit.3mf")
+        wanted = mesh_file.read(path).structure["prototypes"]
+        with _NoKernel():
+            found = mesh_file.read(path).structure["prototypes"]
+        self.assertEqual([p["name"] for p in found], ["plate", "peg"])
+        self.assertEqual([p["material"] for p in found], [p["material"] for p in wanted])
+        self.assertEqual([p["color"] for p in found], [p["color"] for p in wanted])
 
 
 # --- GLB -------------------------------------------------------------------------------------------
